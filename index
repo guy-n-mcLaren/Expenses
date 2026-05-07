@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Receipt Scanner</title>
+    <script src="https://cdn.jsdelivr.net/npm/tesseract.js@4/dist/tesseract.min.js"></script>
+    <style>
+        body { font-family: -apple-system, sans-serif; padding: 20px; background: #f4f4f9; }
+        .card { background: white; padding: 20px; border-radius: 15px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+        select, input, button { width: 100%; padding: 12px; margin: 10px 0; border-radius: 8px; border: 1px solid #ccc; font-size: 16px; }
+        button { background: #007aff; color: white; border: none; font-weight: bold; }
+        #status { color: #666; font-size: 0.9em; text-align: center; }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <h2>🧾 Receipt to Sheet</h2>
+        <input type="file" accept="image/*" capture="camera" id="cameraInput">
+        
+        <p id="status">Ready to scan...</p>
+
+        <input type="text" id="amount" placeholder="Detected Amount ($)">
+        
+        <select id="category">
+            <option value="">Select Category...</option>
+            <option>Office Furniture</option><option>Insurance</option>
+            <option>Comms</option><option>Ent</option>
+            <option>Stationary</option><option>Tech</option>
+            <option>IT</option><option>Travel</option>
+            <option>Corp Gifts</option><option>Accom</option>
+            <option>Samples</option><option>Development</option>
+            <option>Events</option>
+        </select>
+
+        <button onclick="sendToSheet()">🚀 Send to Google Sheets</button>
+    </div>
+
+    <script>
+        const scriptURL = 'PASTE_YOUR_GOOGLE_SCRIPT_URL_HERE';
+        const cameraInput = document.getElementById('cameraInput');
+        const status = document.getElementById('status');
+
+        cameraInput.addEventListener('change', async (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            status.innerText = "🌀 Reading receipt (OCR)...";
+            
+            // Tesseract OCR Logic
+            const result = await Tesseract.recognize(file, 'eng');
+            const text = result.data.text;
+            
+            // Simple Regex to find numbers that look like prices (e.g., 12.99)
+            const amounts = text.match(/\d+\.\d{2}/g);
+            if (amounts) {
+                document.getElementById('amount').value = amounts[amounts.length - 1];
+                status.innerText = "✅ Amount detected!";
+            } else {
+                status.innerText = "❌ Couldn't find price. Please enter manually.";
+            }
+        });
+
+        async function sendToSheet() {
+            const data = {
+                category: document.getElementById('category').value,
+                amount: document.getElementById('amount').value,
+                vendor: "Mobile Upload"
+            };
+
+            status.innerText = "📤 Sending...";
+
+            await fetch(scriptURL, {
+                method: 'POST',
+                mode: 'no-cors', // Needed for Google Apps Script
+                body: JSON.stringify(data)
+            });
+
+            status.innerText = "🎉 Saved to Sheet!";
+            document.getElementById('amount').value = "";
+        }
+    </script>
+</body>
+</html>
