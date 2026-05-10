@@ -8,11 +8,11 @@
     <style>
         body { font-family: -apple-system, sans-serif; padding: 20px; background: #f4f4f9; max-width: 500px; margin: auto; }
         .card { background: white; padding: 20px; border-radius: 20px; box-shadow: 0 10px 25px rgba(0,0,0,0.1); border: 1px solid #eee; }
-        select, input, button { width: 100%; padding: 15px; margin: 8px 0; border-radius: 12px; border: 1px solid #ddd; font-size: 16px; -webkit-appearance: none; }
+        select, input, button { width: 100%; padding: 15px; margin: 8px 0; border-radius: 12px; border: 1px solid #ddd; font-size: 16px; -webkit-appearance: none; box-sizing: border-box; }
         button { background: #007aff; color: white; border: none; font-weight: 700; cursor: pointer; margin-top: 15px; }
-        #status { color: #8e8e93; font-size: 0.85em; text-align: center; margin: 10px 0; font-weight: 600; }
+        #status { color: #8e8e93; font-size: 0.85em; text-align: center; margin: 10px 0; font-weight: 600; min-height: 1.2em; }
         label { font-size: 0.75em; color: #8e8e93; font-weight: bold; margin-left: 5px; text-transform: uppercase; }
-        h2 { text-align: center; color: #1c1c1e; font-size: 1.4em; }
+        h2 { text-align: center; color: #1c1c1e; font-size: 1.4em; margin-bottom: 20px; }
     </style>
 </head>
 <body>
@@ -22,7 +22,7 @@
         <div id="status">Tap above to take photo</div>
 
         <label>Store Name</label>
-        <input type="text" id="vendor" placeholder="e.g. Bunnings">
+        <input type="text" id="vendor" placeholder="Searching for vendor...">
 
         <label>Amount ($)</label>
         <input type="number" step="0.01" id="amount" placeholder="0.00">
@@ -53,41 +53,69 @@
         cameraInput.addEventListener('change', async (e) => {
             const file = e.target.files[0];
             if (!file) return;
-            status.innerText = "⏳ Running Melbourne AI Engine...";
+            status.innerText = "⏳ Reading receipt... (Takes ~10s)";
             
             try {
-                const result = await Tesseract.recognize(file, 'eng');
-                const fullText = result.data.text;
-                const lines = result.data.lines;
+                // Initialize Tesseract with a "Fast" preset
+                const worker = await Tesseract.createWorker();
+                await worker.loadLanguage('eng');
+                await worker.initialize('eng');
                 
-                // --- VENDOR LOGIC (CLEANER) ---
-                let ignoreWords = ['TAX', 'INVOICE', 'WELCOME', 'STORE', 'ADDRESS', 'ABN', 'TEL', 'DATE', 'TIME'];
-                let possibleVendor = "";
+                const { data: { lines, text } } = await worker.recognize(file);
+                console.log("Full Scan Results:", text);
                 
+                // --- VENDOR LOGIC: Look for the most likely name ---
+                let ignoreList = ['TAX', 'INVOICE', 'WELCOME', 'STORE', 'ADDRESS', 'ABN', 'TEL', 'PHONE', 'DATE', 'STR', 'RD', 'VIC', 'NSW', 'QLD'];
+                let detectedVendor = "";
+                
+                // Look at the first 8 lines, find the one that looks like a Brand
                 for (let line of lines.slice(0, 8)) {
-                    let text = line.text.trim().toUpperCase();
-                    if (text.length > 3 && !ignoreWords.some(word => text.includes(word)) && !/\d{4,}/.test(text)) {
-                        possibleVendor = line.text.trim().replace(/[^a-zA-Z0-9 ]/g, "");
-                        break; 
+                    let t = line.text.trim();
+                    let upperT = t.toUpperCase();
+                    // If it's long enough, not in the ignore list, and isn't just numbers
+                    if (t.length > 3 && !ignoreList.some(word => upperT.includes(word)) && !/\d{4,}/.test(t)) {
+                        detectedVendor = t.replace(/[^a-zA-Z0-9 ]/g, "");
+                        break;
                     }
                 }
-                vendorInput.value = possibleVendor;
+                vendorInput.value = detectedVendor;
 
-                // --- AMOUNT LOGIC (SMARTER) ---
+                // --- AMOUNT LOGIC: Hunt for the Total ---
                 const amountRegex = /\d+[\.,]\d{2}/g;
-                const matches = fullText.match(amountRegex);
-                
-                if (matches) {
-                    const numbers = matches.map(num => parseFloat(num.replace(',', '.')));
-                    // We take the max, but check if "TOTAL" is nearby in the raw text
-                    const largest = Math.max(...numbers);
-                    amountInput.value = largest.toFixed(2);
-                    status.innerText = "✅ Done. Please verify data.";
-                } else {
-                    status.innerText = "⚠️ Text read, but no price found.";
+                let foundAmount = 0;
+
+                // Method A: Look for a line containing "Total" + a number
+                for (let line of lines) {
+                    let t = line.text.toUpperCase();
+                    if (t.includes('TOTAL') || t.includes('DUE') || t.includes('BAL') || t.includes('AMOUNT')) {
+                        let lineMatches = t.match(amountRegex);
+                        if (lineMatches) {
+                            foundAmount = parseFloat(lineMatches[0].replace(',', '.'));
+                            break;
+                        }
+                    }
                 }
+
+                // Method B: Fallback to the largest number on the page
+                if (foundAmount === 0) {
+                    const allMatches = text.match(amountRegex);
+                    if (allMatches) {
+                        const numbers = allMatches.map(num => parseFloat(num.replace(',', '.')));
+                        foundAmount = Math.max(...numbers);
+                    }
+                }
+
+                if (foundAmount > 0) {
+                    amountInput.value = foundAmount.toFixed(2);
+                    status.innerText = "✅ Done. Please verify.";
+                } else {
+                    status.innerText = "⚠️ Could not find total. Enter manually.";
+                }
+
+                await worker.terminate();
             } catch (err) {
-                status.innerText = "❌ Error: Try a clearer photo.";
+                console.error(err);
+                status.innerText = "❌ Error reading image. Try again.";
             }
         });
 
@@ -103,11 +131,20 @@
             }
 
             status.innerText = "📤 Syncing to Melbourne...";
-            await fetch(scriptURL, { method: 'POST', mode: 'no-cors', body: JSON.stringify(data) });
-            status.innerText = "🎉 Saved!";
             
-            // Clear inputs for next entry
-            amountInput.value = ""; vendorInput.value = ""; document.getElementById('category').value = "";
+            try {
+                await fetch(scriptURL, { 
+                    method: 'POST', 
+                    mode: 'no-cors', 
+                    body: JSON.stringify(data) 
+                });
+                status.innerText = "🎉 Saved Successfully!";
+                amountInput.value = ""; 
+                vendorInput.value = ""; 
+                document.getElementById('category').value = "";
+            } catch (e) {
+                status.innerText = "❌ Connection Failed.";
+            }
         }
     </script>
 </body>
