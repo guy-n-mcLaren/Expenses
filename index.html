@@ -8,9 +8,11 @@
     <style>
         body { font-family: -apple-system, sans-serif; padding: 20px; background: #f4f4f9; }
         .card { background: white; padding: 20px; border-radius: 15px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
-        select, input, button { width: 100%; padding: 12px; margin: 10px 0; border-radius: 8px; border: 1px solid #ccc; font-size: 16px; }
-        button { background: #007aff; color: white; border: none; font-weight: bold; }
-        #status { color: #666; font-size: 0.9em; text-align: center; }
+        select, input, button { width: 100%; padding: 12px; margin: 10px 0; border-radius: 8px; border: 1px solid #ccc; font-size: 16px; box-sizing: border-box; }
+        button { background: #007aff; color: white; border: none; font-weight: bold; cursor: pointer; }
+        button:active { background: #0056b3; }
+        #status { color: #666; font-size: 0.9em; text-align: center; font-weight: 500; }
+        h2 { text-align: center; color: #333; }
     </style>
 </head>
 <body>
@@ -20,7 +22,9 @@
         
         <p id="status">Ready to scan...</p>
 
-        <input type="text" id="amount" placeholder="Detected Amount ($)">
+        <input type="text" id="vendor" placeholder="Vendor (Store Name)">
+
+        <input type="text" id="amount" placeholder="Total Amount ($)">
         
         <select id="category">
             <option value="">Select Category...</option>
@@ -37,47 +41,78 @@
     </div>
 
     <script>
+        // Your current script URL is preserved here
         const scriptURL = 'https://script.google.com/macros/s/AKfycbzEiBWuR3Q6u7PntTNJu1HmGKzstCtAeyDGQvM1pEgO7jm7MFhtkVH7j7spfw4Qdn1NIQ/exec';
+        
         const cameraInput = document.getElementById('cameraInput');
         const status = document.getElementById('status');
+        const vendorInput = document.getElementById('vendor');
+        const amountInput = document.getElementById('amount');
 
         cameraInput.addEventListener('change', async (e) => {
             const file = e.target.files[0];
             if (!file) return;
 
-            status.innerText = "🌀 Reading receipt (OCR)...";
+            status.innerText = "🌀 Analyzing Receipt (Melbourne Time)...";
             
             // Tesseract OCR Logic
             const result = await Tesseract.recognize(file, 'eng');
-            const text = result.data.text;
+            const lines = result.data.lines;
+            const fullText = result.data.text;
             
-            // Simple Regex to find numbers that look like prices (e.g., 12.99)
-            const amounts = text.match(/\d+\.\d{2}/g);
-            if (amounts) {
-                document.getElementById('amount').value = amounts[amounts.length - 1];
-                status.innerText = "✅ Amount detected!";
+            // --- 1. VENDOR DETECTION (New) ---
+            // Grabs the longest line from the first 3 lines of text
+            if (lines.length > 0) {
+                let topLines = lines.slice(0, 3).map(l => l.text.trim().replace(/[^a-zA-Z0-9 ]/g, ""));
+                let detectedVendor = topLines.reduce((a, b) => a.length > b.length ? a : b);
+                vendorInput.value = detectedVendor;
+            }
+
+            // --- 2. LARGEST NUMBER DETECTION (New) ---
+            const amountRegex = /\d+\.\d{2}/g;
+            const matches = fullText.match(amountRegex);
+            
+            if (matches) {
+                // Convert strings like "12.50" to numbers
+                const numbers = matches.map(num => parseFloat(num.replace(',', '')));
+                // Pick the highest number found
+                const largestAmount = Math.max(...numbers);
+                amountInput.value = largestAmount.toFixed(2);
+                status.innerText = "✅ Analysis Complete!";
             } else {
-                status.innerText = "❌ Couldn't find price. Please enter manually.";
+                status.innerText = "❓ Found vendor, but couldn't find a price.";
             }
         });
 
         async function sendToSheet() {
             const data = {
                 category: document.getElementById('category').value,
-                amount: document.getElementById('amount').value,
-                vendor: "Mobile Upload"
+                amount: amountInput.value,
+                vendor: vendorInput.value || "Unknown Vendor"
             };
 
-            status.innerText = "📤 Sending...";
+            if (!data.amount || !data.category) {
+                alert("Please ensure Amount and Category are filled!");
+                return;
+            }
 
-            await fetch(scriptURL, {
-                method: 'POST',
-                mode: 'no-cors', // Needed for Google Apps Script
-                body: JSON.stringify(data)
-            });
+            status.innerText = "📤 Sending to Google Sheets...";
 
-            status.innerText = "🎉 Saved to Sheet!";
-            document.getElementById('amount').value = "";
+            try {
+                await fetch(scriptURL, {
+                    method: 'POST',
+                    mode: 'no-cors', 
+                    body: JSON.stringify(data)
+                });
+
+                status.innerText = "🎉 Saved to Sheet!";
+                // Clear inputs for the next one
+                amountInput.value = "";
+                vendorInput.value = "";
+                document.getElementById('category').value = "";
+            } catch (error) {
+                status.innerText = "❌ Connection Error";
+            }
         }
     </script>
 </body>
