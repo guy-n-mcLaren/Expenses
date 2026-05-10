@@ -9,7 +9,8 @@
         body { font-family: -apple-system, sans-serif; padding: 20px; background: #f4f4f9; max-width: 500px; margin: auto; }
         .card { background: white; padding: 20px; border-radius: 20px; box-shadow: 0 10px 25px rgba(0,0,0,0.1); border: 1px solid #eee; }
         select, input, button { width: 100%; padding: 15px; margin: 8px 0; border-radius: 12px; border: 1px solid #ddd; font-size: 16px; -webkit-appearance: none; box-sizing: border-box; }
-        button { background: #007aff; color: white; border: none; font-weight: 700; cursor: pointer; margin-top: 15px; }
+        button { background: #34c759; color: white; border: none; font-weight: 700; cursor: pointer; margin-top: 15px; }
+        button:active { background: #28a745; transform: scale(0.98); }
         #status { color: #8e8e93; font-size: 0.85em; text-align: center; margin: 10px 0; font-weight: 600; min-height: 1.2em; }
         label { font-size: 0.75em; color: #8e8e93; font-weight: bold; margin-left: 5px; text-transform: uppercase; }
         h2 { text-align: center; color: #1c1c1e; font-size: 1.4em; margin-bottom: 20px; }
@@ -22,7 +23,7 @@
         <div id="status">Tap above to take photo</div>
 
         <label>Store Name</label>
-        <input type="text" id="vendor" placeholder="Searching for vendor...">
+        <input type="text" id="vendor" placeholder="Searching...">
 
         <label>Amount ($)</label>
         <input type="number" step="0.01" id="amount" placeholder="0.00">
@@ -43,7 +44,8 @@
     </div>
 
     <script>
-        const scriptURL = 'https://script.google.com/macros/s/AKfycbzEiBWuR3Q6u7PntTNJu1HmGKzstCtAeyDGQvM1pEgO7jm7MFhtkVH7j7spfw4Qdn1NIQ/exec';
+        // REPLACE THIS URL with your newest Deployment URL from the Step above
+        const scriptURL = 'https://script.google.com/macros/s/AKfycbzrQ7rYU572V0pNMCN0yCETvlbB9yNHneSEp-xXjREJ7iWznDaMGOCaJ_GkNPdJlu56QA/exec';
         
         const cameraInput = document.getElementById('cameraInput');
         const status = document.getElementById('status');
@@ -53,26 +55,22 @@
         cameraInput.addEventListener('change', async (e) => {
             const file = e.target.files[0];
             if (!file) return;
-            status.innerText = "⏳ Reading receipt... (Takes ~10s)";
+            status.innerText = "⏳ Analyzing... (approx 10s)";
             
             try {
-                // Initialize Tesseract with a "Fast" preset
                 const worker = await Tesseract.createWorker();
                 await worker.loadLanguage('eng');
                 await worker.initialize('eng');
                 
                 const { data: { lines, text } } = await worker.recognize(file);
-                console.log("Full Scan Results:", text);
                 
-                // --- VENDOR LOGIC: Look for the most likely name ---
+                // --- 1. SMART VENDOR DETECTION ---
                 let ignoreList = ['TAX', 'INVOICE', 'WELCOME', 'STORE', 'ADDRESS', 'ABN', 'TEL', 'PHONE', 'DATE', 'STR', 'RD', 'VIC', 'NSW', 'QLD'];
                 let detectedVendor = "";
-                
-                // Look at the first 8 lines, find the one that looks like a Brand
+                // Scan top lines for something that isn't a header or address
                 for (let line of lines.slice(0, 8)) {
                     let t = line.text.trim();
                     let upperT = t.toUpperCase();
-                    // If it's long enough, not in the ignore list, and isn't just numbers
                     if (t.length > 3 && !ignoreList.some(word => upperT.includes(word)) && !/\d{4,}/.test(t)) {
                         detectedVendor = t.replace(/[^a-zA-Z0-9 ]/g, "");
                         break;
@@ -80,23 +78,23 @@
                 }
                 vendorInput.value = detectedVendor;
 
-                // --- AMOUNT LOGIC: Hunt for the Total ---
+                // --- 2. TOTAL AMOUNT DETECTION ---
                 const amountRegex = /\d+[\.,]\d{2}/g;
                 let foundAmount = 0;
-
-                // Method A: Look for a line containing "Total" + a number
+                
+                // Look for lines containing "Total", "Balance", or "Due"
                 for (let line of lines) {
                     let t = line.text.toUpperCase();
-                    if (t.includes('TOTAL') || t.includes('DUE') || t.includes('BAL') || t.includes('AMOUNT')) {
+                    if (t.includes('TOTAL') || t.includes('DUE') || t.includes('BAL') || t.includes('PAY')) {
                         let lineMatches = t.match(amountRegex);
-                        if (lineMatches) {
-                            foundAmount = parseFloat(lineMatches[0].replace(',', '.'));
-                            break;
+                        if (lineMatches) { 
+                            foundAmount = parseFloat(lineMatches[0].replace(',', '.')); 
+                            break; 
                         }
                     }
                 }
-
-                // Method B: Fallback to the largest number on the page
+                
+                // If keywords failed, pick the largest number on the whole page
                 if (foundAmount === 0) {
                     const allMatches = text.match(amountRegex);
                     if (allMatches) {
@@ -107,15 +105,14 @@
 
                 if (foundAmount > 0) {
                     amountInput.value = foundAmount.toFixed(2);
-                    status.innerText = "✅ Done. Please verify.";
+                    status.innerText = "✅ Done. Verify & Save.";
                 } else {
-                    status.innerText = "⚠️ Could not find total. Enter manually.";
+                    status.innerText = "⚠️ Found text, but couldn't find price.";
                 }
 
                 await worker.terminate();
             } catch (err) {
-                console.error(err);
-                status.innerText = "❌ Error reading image. Try again.";
+                status.innerText = "❌ Scan Error. Please try again.";
             }
         });
 
@@ -130,7 +127,7 @@
                 alert("Missing Amount or Category!"); return;
             }
 
-            status.innerText = "📤 Syncing to Melbourne...";
+            status.innerText = "📤 Saving to Sheet...";
             
             try {
                 await fetch(scriptURL, { 
@@ -139,9 +136,8 @@
                     body: JSON.stringify(data) 
                 });
                 status.innerText = "🎉 Saved Successfully!";
-                amountInput.value = ""; 
-                vendorInput.value = ""; 
-                document.getElementById('category').value = "";
+                // Clear fields for next entry
+                amountInput.value = ""; vendorInput.value = ""; document.getElementById('category').value = "";
             } catch (e) {
                 status.innerText = "❌ Connection Failed.";
             }
