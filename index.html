@@ -3,28 +3,27 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Receipt Scanner</title>
+    <title>Receipt Scanner Pro</title>
     <script src="https://cdn.jsdelivr.net/npm/tesseract.js@4/dist/tesseract.min.js"></script>
     <style>
-        body { font-family: -apple-system, sans-serif; padding: 20px; background: #f4f4f9; }
-        .card { background: white; padding: 20px; border-radius: 15px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
-        select, input, button { width: 100%; padding: 12px; margin: 10px 0; border-radius: 8px; border: 1px solid #ccc; font-size: 16px; box-sizing: border-box; }
-        button { background: #007aff; color: white; border: none; font-weight: bold; cursor: pointer; }
-        button:active { background: #0056b3; }
-        #status { color: #666; font-size: 0.9em; text-align: center; font-weight: 500; }
-        h2 { text-align: center; color: #333; }
+        body { font-family: -apple-system, sans-serif; padding: 20px; background: #f4f4f9; max-width: 500px; margin: auto; }
+        .card { background: white; padding: 20px; border-radius: 15px; box-shadow: 0 4px 10px rgba(0,0,0,0.1); }
+        select, input, button { width: 100%; padding: 14px; margin: 10px 0; border-radius: 10px; border: 1px solid #ddd; font-size: 16px; box-sizing: border-box; }
+        button { background: #007aff; color: white; border: none; font-weight: bold; transition: 0.2s; }
+        button:active { transform: scale(0.98); background: #0056b3; }
+        #status { color: #555; font-size: 0.9em; text-align: center; min-height: 1.2em; margin: 10px 0; }
+        h2 { text-align: center; margin-top: 0; color: #1c1c1e; }
     </style>
 </head>
 <body>
     <div class="card">
-        <h2>🧾 Receipt to Sheet</h2>
+        <h2>🧾 Receipt Scanner</h2>
         <input type="file" accept="image/*" capture="camera" id="cameraInput">
         
-        <p id="status">Ready to scan...</p>
+        <div id="status">Ready to scan...</div>
 
-        <input type="text" id="vendor" placeholder="Vendor (Store Name)">
-
-        <input type="text" id="amount" placeholder="Total Amount ($)">
+        <input type="text" id="vendor" placeholder="Store Name (Detected)">
+        <input type="number" step="0.01" id="amount" placeholder="Total Amount ($)">
         
         <select id="category">
             <option value="">Select Category...</option>
@@ -37,11 +36,10 @@
             <option>Events</option>
         </select>
 
-        <button onclick="sendToSheet()">🚀 Send to Google Sheets</button>
+        <button onclick="sendToSheet()">🚀 Save to Google Sheets</button>
     </div>
 
     <script>
-        // Your current script URL is preserved here
         const scriptURL = 'https://script.google.com/macros/s/AKfycbzEiBWuR3Q6u7PntTNJu1HmGKzstCtAeyDGQvM1pEgO7jm7MFhtkVH7j7spfw4Qdn1NIQ/exec';
         
         const cameraInput = document.getElementById('cameraInput');
@@ -53,34 +51,40 @@
             const file = e.target.files[0];
             if (!file) return;
 
-            status.innerText = "🌀 Analyzing Receipt (Melbourne Time)...";
+            status.innerText = "⏳ Reading receipt... please wait...";
             
-            // Tesseract OCR Logic
-            const result = await Tesseract.recognize(file, 'eng');
-            const lines = result.data.lines;
-            const fullText = result.data.text;
-            
-            // --- 1. VENDOR DETECTION (New) ---
-            // Grabs the longest line from the first 3 lines of text
-            if (lines.length > 0) {
-                let topLines = lines.slice(0, 3).map(l => l.text.trim().replace(/[^a-zA-Z0-9 ]/g, ""));
-                let detectedVendor = topLines.reduce((a, b) => a.length > b.length ? a : b);
-                vendorInput.value = detectedVendor;
-            }
+            try {
+                const result = await Tesseract.recognize(file, 'eng');
+                const fullText = result.data.text;
+                const lines = result.data.lines;
+                
+                console.log("Raw OCR Text:", fullText); // See this in browser console
 
-            // --- 2. LARGEST NUMBER DETECTION (New) ---
-            const amountRegex = /\d+\.\d{2}/g;
-            const matches = fullText.match(amountRegex);
-            
-            if (matches) {
-                // Convert strings like "12.50" to numbers
-                const numbers = matches.map(num => parseFloat(num.replace(',', '')));
-                // Pick the highest number found
-                const largestAmount = Math.max(...numbers);
-                amountInput.value = largestAmount.toFixed(2);
-                status.innerText = "✅ Analysis Complete!";
-            } else {
-                status.innerText = "❓ Found vendor, but couldn't find a price.";
+                // --- 1. BETTER VENDOR DETECTION ---
+                // Filter out lines that are too short or just dates/numbers
+                let vendorCandidates = lines.slice(0, 6)
+                    .map(l => l.text.trim())
+                    .filter(t => t.length > 3 && !/\d{2,}/.test(t)); // Must be > 3 chars, no long numbers
+                
+                if (vendorCandidates.length > 0) {
+                    vendorInput.value = vendorCandidates[0].replace(/[^a-zA-Z0-9 ]/g, "");
+                }
+
+                // --- 2. BETTER AMOUNT DETECTION ---
+                // Looks for: 12.34 or 12,34 or just 12 (as long as it looks like a price)
+                const amountRegex = /\d+[\.,]\d{2}/g;
+                const matches = fullText.match(amountRegex);
+                
+                if (matches) {
+                    const numbers = matches.map(num => parseFloat(num.replace(',', '.')));
+                    const largestAmount = Math.max(...numbers);
+                    amountInput.value = largestAmount.toFixed(2);
+                    status.innerText = "✅ Analysis Complete!";
+                } else {
+                    status.innerText = "⚠️ Found text, but couldn't find price.";
+                }
+            } catch (err) {
+                status.innerText = "❌ Scan Error: " + err.message;
             }
         });
 
@@ -88,15 +92,15 @@
             const data = {
                 category: document.getElementById('category').value,
                 amount: amountInput.value,
-                vendor: vendorInput.value || "Unknown Vendor"
+                vendor: vendorInput.value || "Manual Entry"
             };
 
             if (!data.amount || !data.category) {
-                alert("Please ensure Amount and Category are filled!");
+                alert("Please fill in Amount and Category!");
                 return;
             }
 
-            status.innerText = "📤 Sending to Google Sheets...";
+            status.innerText = "📤 Sending...";
 
             try {
                 await fetch(scriptURL, {
@@ -105,8 +109,7 @@
                     body: JSON.stringify(data)
                 });
 
-                status.innerText = "🎉 Saved to Sheet!";
-                // Clear inputs for the next one
+                status.innerText = "🎉 Saved Successfully!";
                 amountInput.value = "";
                 vendorInput.value = "";
                 document.getElementById('category').value = "";
